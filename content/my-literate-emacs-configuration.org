@@ -1,0 +1,2249 @@
+#+TITLE: My Literate Emacs Configuration
+#+AUTHOR: Simen Omholt-Jensen
+#+STARTUP:     hidestars overview
+#+PROPERTIES: header-args:emacs-lisp :tangle "~/.emacs.d/init.el"
+
+[[https://github.com/simenojensen/.emacs.d/blob/master/my-literate-emacs-configuration.org][My Configs]]
+
+* Start up
+** Lexical Binding
+
+#+begin_quote
+Until Emacs 24.1 (June 2012), Elisp only had dynamically scoped variables, a
+feature, mostly by accident, common to old lisp dialects. While dynamic scope
+has some selective uses, it’s widely regarded as a mistake for local variables,
+and virtually no other languages have adopted it.
+#+end_quote
+
+[[https://nullprogram.com/blog/2016/12/22/][More Information]]
+
+#+begin_src emacs-lisp
+  ;;; init.el --- -*- lexical-binding: t -*-
+#+end_src
+
+** Avoid Garbage Collection at Startup
+
+#+begin_quote
+The GC can easily double startup time, so we suppress it at startup by turning
+up =gc-cons-threshold= (and perhaps =gc-cons-percentage=) temporarily:
+#+end_quote
+
+[[https://github.com/hlissner/doom-emacs/blob/develop/docs/faq.org#how-does-doom-start-up-so-quickly][More Information]]
+
+#+begin_src emacs-lisp
+  (setq gc-cons-threshold most-positive-fixnum ; 2^61 bytes
+        gc-cons-percentage 0.6)
+#+end_src
+
+** Benchmarking
+
+First, declare a hook which will benchmark the startup process. It reports how
+long the it took to start up, and how many garbage collections were performed.
+
+[[https://blog.d46.us/advanced-emacs-startup/][More Information]]
+
+#+begin_src emacs-lisp
+  (add-hook 'emacs-startup-hook
+            (lambda ()
+              (message "Emacs ready in %s with %d garbage collections."
+                       (format "%.2f seconds"
+                               (float-time
+                                (time-subtract after-init-time before-init-time)))
+                       gcs-done)))
+#+end_src
+
+** Unset =file-name-handler-alist=
+
+Every file opened and loaded by Emacs will run through this list to check for a
+proper handler for the file, but during startup, it won’t need any of them.
+
+#+begin_src emacs-lisp
+  (defvar file-name-handler-alist-original file-name-handler-alist)
+  (setq file-name-handler-alist nil)
+#+end_src
+
+* Garbage Collection
+** Set =gc-cons-threshold= Smaller for Interactive Use
+
+A large =gc-cons-threshold= may cause freezing and stuttering during long-term
+interactive use. If you experience freezing, decrease this amount, if you
+increase stuttering, increase this amount.
+
+#+begin_src emacs-lisp
+  (defvar better-gc-cons-threshold 100000000 ; 100mb
+    "The default value to use for `gc-cons-threshold'.
+     If you experience freezing, decrease this.  If you experience stuttering, increase this.")
+
+  (add-hook 'emacs-startup-hook
+            (lambda ()
+              (setq gc-cons-threshold better-gc-cons-threshold)
+              (setq file-name-handler-alist file-name-handler-alist-original)
+              (makunbound 'file-name-handler-alist-original)))
+#+end_src
+
+Garbage Collect when Emacs is out of focus and avoid garbage collection when
+using minibuffer.
+
+#+begin_src emacs-lisp
+  (add-hook 'emacs-startup-hook
+            (lambda ()
+              (if (boundp 'after-focus-change-function)
+                  (add-function :after after-focus-change-function
+                                (lambda ()
+                                  (unless (frame-focus-state)
+                                    (garbage-collect))))
+                (add-hook 'after-focus-change-function 'garbage-collect))
+              (defun gc-minibuffer-setup-hook ()
+                (setq gc-cons-threshold (* better-gc-cons-threshold 2)))
+
+              (defun gc-minibuffer-exit-hook ()
+                (garbage-collect)
+                (setq gc-cons-threshold better-gc-cons-threshold))
+
+              (add-hook 'minibuffer-setup-hook #'gc-minibuffer-setup-hook)
+              (add-hook 'minibuffer-exit-hook #'gc-minibuffer-exit-hook)))
+#+end_src
+
+* Package Management
+** =straight.el=
+
+[[https://github.com/raxod502/straight.el#getting-started][More Information]]
+
+#+begin_src emacs-lisp
+  (defvar bootstrap-version)
+  (let ((bootstrap-file
+         (expand-file-name "straight/repos/straight.el/bootstrap.el" user-emacs-directory))
+        (bootstrap-version 5))
+    (unless (file-exists-p bootstrap-file)
+      (with-current-buffer
+          (url-retrieve-synchronously
+           "https://raw.githubusercontent.com/raxod502/straight.el/develop/install.el"
+           'silent 'inhibit-cookies)
+        (goto-char (point-max))
+        (eval-print-last-sexp)))
+    (load bootstrap-file nil 'nomessage))
+#+end_src
+
+*** =use-package= integration
+[[https://github.com/raxod502/straight.el#getting-started][More Information]]
+
+#+begin_src emacs-lisp
+  (straight-use-package 'use-package)
+  (setq straight-use-package-by-default t)
+#+end_src
+
+** =package-enable-at-startup=
+
+Set =package-enable-at-startup= to =nil= to prevent superfluous loading of packages.
+
+[[https://www.gnu.org/software/emacs/manual/html_node/emacs/Package-Installation.html][More Information]]
+
+#+begin_src emacs-lisp
+  (setq-default package-enable-at-startup nil)
+#+end_src
+
+** Prefer Newer =.el= Files Over Older =.elc= Files.
+
+#+begin_src emacs-lisp
+  (setq-default load-prefer-newer t)
+#+end_src
+
+** Automatically Compile Packages During Startup.
+
+[[https://github.com/emacscollective/auto-compile][More Information]]
+
+#+begin_src emacs-lisp
+  (use-package auto-compile
+    :config
+    (auto-compile-on-load-mode)
+    (auto-compile-on-save-mode))
+#+end_src
+
+** =bind-key=
+
+To use with =use-package=.
+
+#+begin_src emacs-lisp
+  (use-package bind-key)
+#+end_src
+
+** =diminish=
+
+The =diminish= package makes it possible to remove clutter from the modeline. The =:diminish= keyword in the =use-package= declarations signify =diminish= invocation.
+
+[[https://github.com/myrjola/diminish.el][More Information]]
+
+#+begin_src emacs-lisp
+  (use-package diminish)
+#+end_src
+
+** =try=
+
+The =try= package let's you try new packages without installed them. On the next restart of Emacs, they are not loaded.
+
+[[https://github.com/larstvei/Try][More Information]]
+
+#+begin_src emacs-lisp
+  (use-package try)
+#+end_src
+
+* Global Functionalities
+** User Information
+#+begin_src emacs-lisp
+  (setq user-full-name "Simen Omholt-Jensen")
+  (setq user-mail-address "simen@omholt-jensen.com")
+#+end_src
+** Convenient Default Settings
+
+#+begin_src emacs-lisp
+  (add-to-list 'default-frame-alist '(ns-transparent-titlebar . t))                       ;; Fancy titlebar for MacOS
+  (add-to-list 'default-frame-alist '(ns-appearance . dark))                              ;; Fancy titlebar for MacOS
+  (setq ns-use-proxy-icon  nil)                                                           ;; Fancy titlebar for MacOS
+  (setq frame-title-format '(:eval (if (buffer-file-name)                                 ;; Set frame title to *Buffer/File Name*
+				       (abbreviate-file-name (buffer-file-name)) "%b")))
+  (set-language-environment "UTF-8")                                                      ;; Set enconding language
+  (set-default-coding-systems 'utf-8)                                                     ;; Set enconding language
+  (prefer-coding-system 'utf-8)                                                           ;; Set enconding language
+  (set-terminal-coding-system 'utf-8)                                                     ;; Set enconding language
+  (set-keyboard-coding-system 'utf-8)                                                     ;; Set enconding language
+  (global-display-line-numbers-mode)                                                      ;; Display line numbers
+  (setq-default read-process-output-max (* 1024 1024))                                    ;; Increase the amount of data which Emacs reads from the process
+  (dolist (mode '(vterm-mode-hook
+		  jupyter-repl-mode-hook))                                                       ;; disable line number for some modes
+    (add-hook mode (lambda () (display-line-numbers-mode 0))))
+  (setq-default fill-column 80)                                                           ;; Set fill column to 80 chars by default
+  (setq-default column-number-mode t)                                                     ;; Display column numbers
+  (dolist (mode '(org-mode-hook                                                           ;; Disable line numbers for some modes
+		  term-mode-hook
+		  eshell-mode-hook))
+    (add-hook mode (lambda () (display-line-numbers-mode 0))))
+  (setq-default inhibit-startup-screen t)                                                 ;; Don't show the startup message
+  (setq-default initial-scratch-message nil)                                              ;; Set initial scratch message to nil
+  (set-fringe-mode 10)                                                                    ;; Give some breathing room
+  (setq debug-on-error nil)                                                               ;; Receive more information errors
+  (setq custom-file "~/.emacs.d/custom.el")
+  (ignore-errors (load custom-file))                                                      ;; Load custom.el if it exists
+  (setq-default create-lockfiles nil)                                                     ;; Disable lock files
+  (setq-default backup-directory-alist '(("." . "/Users/simenojensen/.emacs.d/backups"))) ;; Save backup files
+  (setq-default indent-tabs-mode nil)                                                     ;; Don't use hard tabs
+  (setq echo-keystrokes 0.1)                                                              ;; Echo keystrokes fast
+  (fset 'yes-or-no-p 'y-or-n-p)                                                           ;; y-or-n instead of yes-or-no
+  (add-hook 'before-save-hook 'delete-trailing-whitespace)                                ;; Delete trailing whitespace on save
+  (setq require-final-newline t)                                                          ;; Add a newline at end of file on save
+  (global-auto-revert-mode t)                                                             ;; Automatically update buffers if a file content has changed on disk
+  (save-place-mode t)                                                                     ;; Save position of the point in file
+  (global-hl-line-mode t)                                                                 ;; Highlight the line with the point
+  (add-hook 'before-save-hook 'time-stamp)                                                ;; Update timestamp of 8 first lines on save
+  (setq large-file-warning-threshold 100000000)                                           ;; Warn when opening file larger than 100 MB
+  (desktop-save-mode 1)                                                                   ;; save desktop
+  (setq history-delete-duplicates t)                                                      ;; delete duplicate history
+  (setq revert-without-query '(".*"))                                                     ;; do not ask when reverting buffer
+  (setq-default cursor-type '(bar . 4))                                                   ;; use bar for cursort
+  (global-set-key (kbd "<escape>") 'keyboard-escape-quit)                                 ;; Cancel on escape
+#+end_src
+
+** Smooth Scrolling
+
+Configurations for smooth scrolling
+
+#+begin_src emacs-lisp
+  ;; Vertical Scroll
+  (setq scroll-step 1)
+  (setq scroll-margin 1)
+  (setq scroll-conservatively 101)
+  (setq scroll-up-aggressively 0.01)
+  (setq scroll-down-aggressively 0.01)
+  (setq auto-window-vscroll nil)
+  (setq fast-but-imprecise-scrolling nil)
+  (setq mouse-wheel-scroll-amount '(1 ((shift) . 1)))
+  (setq mouse-wheel-progressive-speed nil)
+  ;; Horizontal Scroll
+  (setq hscroll-step 1)
+  (setq hscroll-margin 1)
+#+end_src
+
+** Disable GUIs
+
+#+begin_src emacs-lisp
+  (menu-bar-mode -1)                         ;; Disable menu bar
+  (tool-bar-mode -1)                         ;; Disable tool bar
+  (scroll-bar-mode -1)                       ;; Disable scroll bar
+  (blink-cursor-mode -1)                     ;; Disable blinking cursor
+  (setq-default ring-bell-function 'ignore)  ;; Disable bell function
+#+end_src
+
+** Killing Emacs
+
+#+begin_src emacs-lisp
+  (setq-default confirm-kill-emacs nil)        ;; Do not confirm when killing Emacs
+  (setq-default confirm-kill-processes nil)    ;; do not confirm when killing processes before killing Emacs
+#+end_src
+
+* OS Specific Settings
+
+Detect which OS Emacs is being run on, and configure keybindings accordingly.
+
+#+begin_src emacs-lisp :noweb tangle
+  (cond ((eq system-type 'darwin)
+         <<macOS>>
+         )
+        ((eq system-type 'windows-nt)
+         <<Windows>>
+         )
+        ((eq system-type 'gnu/linux)
+         <<Linux>>
+         ))
+#+end_src
+
+** macOS
+
+By setting the ~M~ to ~⌘~, ~A~ to ~^~ (left option) and ~S~ to ~^~ (right option), we can
+emulate some of the macOS keyboard configurations.
+
+#+begin_src emacs-lisp :tangle no :noweb-ref macOS
+  (customize-set-variable 'mac-command-modifier 'meta)
+  (customize-set-variable 'mac-option-modifier 'alt)
+  (customize-set-variable 'mac-right-command-modifier 'super)
+#+end_src
+
+Next, we are binding ~M-=~ to increase the font size, and ~M--~ to decrease the font
+size.
+
+#+begin_src emacs-lisp :tangle no :noweb-ref macOS
+  (bind-key "M-=" 'text-scale-increase)
+  (bind-key "M--" 'text-scale-decrease)
+#+end_src
+
+Use ~M-`~ to switch focus between frames
+
+#+begin_src emacs-lisp :tangle no :noweb-ref macOS
+  (bind-key "M-`" 'other-frame)
+#+end_src
+Make sure the =$PATH= is loaded from the default shell.
+
+[[https://github.com/purcell/exec-path-from-shell][More Information]]
+
+#+begin_src emacs-lisp :tangle no :noweb-ref macOS
+  (use-package exec-path-from-shell
+    :config
+    (setq shell-file-name "/usr/local/bin/zsh") ;; Let emacs know which shell to use.
+    (setq exec-path-from-shell-variables  '("PATH" "MANPATH" "VIRTUAL_ENV" "PKG_CONFIG_PATH"))
+    (if (string-equal system-type "darwin")
+        (exec-path-from-shell-initialize)))
+#+end_src
+
+** Windows
+
+Not implemented
+
+#+begin_src emacs-lisp :tangle no :noweb-ref Windows
+
+#+end_src
+
+** Linux
+
+Not implemented
+
+#+begin_src emacs-lisp :tangle no :noweb-ref Linux
+
+#+end_src
+
+* Keybindings
+** which-key
+
+The =which-key= package automatically displays potential command information as command keys are typed. This makes it easy to explore Emacs functionality.
+
+[[https://github.com/justbur/emacs-which-key][More Information]]
+
+#+begin_src emacs-lisp
+  (use-package which-key
+    :diminish which-key-mode
+    :config
+    (setq which-key-idle-delay 0.5)
+    (setq which-key-frame-max-height 40)
+    (which-key-mode))
+#+end_src
+
+** =bind-key=
+*** Window Adjustment
+
+#+begin_src emacs-lisp
+  (bind-key "s-<left>" 'shrink-window-horizontally)
+  (bind-key "s-<right>" 'enlarge-window-horizontally)
+  (bind-key "s-<down>" 'shrink-window)
+  (bind-key "s-<up>" 'enlarge-window)
+  (unbind-key "C-v" global-map) ;; disable annoying scroll window
+#+end_src
+
+*** Truncate Lines
+
+#+begin_src emacs-lisp
+  (bind-key "C-x C-l" 'toggle-truncate-lines)
+#+end_src
+
+*** Motion
+
+#+begin_src emacs-lisp
+  (bind-key "M-p" 'backward-paragraph)
+  (bind-key "M-n" 'forward-paragraph)
+  (bind-key "M-g" 'goto-line)
+#+end_src
+
+*** ibuffer
+
+#+begin_src emacs-lisp
+  (bind-key "C-x b" 'ibuffer-other-window)
+#+end_src
+
+* Interface Enhancement
+** =crux=
+
+=crux= is Collection of Ridiculously Useful eXtensions for Emacs.
+
+[[https://github.com/bbatsov/crux][More Information]]
+
+#+begin_src emacs-lisp
+  (use-package crux
+    :bind
+    ("C-a" . crux-move-beginning-of-line)
+    :config
+    (defalias 'rename-file-and-buffer #'crux-rename-file-and-buffer))
+#+end_src
+
+** =Ivy= / =Counsel= / =Swiper= / =amx=
+
+=Ivy= is an interactive interface for completion in Emacs.
+
+[[https://oremacs.com/swiper/][More Information]]
+
+=amx= prioritizes your most used commands
+
+[[https://github.com/DarwinAwardWinner/amx][More Information]]
+
+#+begin_src emacs-lisp
+  (use-package ivy
+    :diminish
+    :init
+    (use-package amx)
+    (use-package counsel :diminish :config (counsel-mode 1))
+    (use-package swiper)
+    (ivy-mode 1)
+    :bind
+    (("C-x C-f" . counsel-find-file)
+     ("C-h f" . counsel-describe-function)
+     ("C-h v" . counsel-describe-variable)
+     ("C-h l" . counsel-find-library)
+     ("C-h i" . counsel-info-lookup-symbol)
+     ("C-h u" . counsel-unicode-char)
+     ("C-c k" . counsel-rg)
+     ("C-x l" . counsel-locate)
+     ("M-x" . counsel-M-x)
+     ("M-v" . counsel-yank-pop)
+     ("C-x C-b" . counsel-switch-buffer)
+     ("C-s" . swiper-isearch))
+    :config
+    (ivy-mode 1)
+    (setq ivy-height 20)
+    (setq ivy-initial-inputs-alist nil)
+    (setq ivy-display-style 'fancy)
+    ;; (setq ivy-use-virtual-buffers t)
+    (setq ivy-count-format "(%d/%d) "))
+#+end_src
+
+** =ivy-posframe=
+ivy-posframe is a ivy extension, which let ivy use posframe to show its candidate menu.
+[[https://github.com/tumashu/ivy-posframe][More Information]]
+
+#+begin_src emacs-lisp :tangle no
+  (use-package ivy-posframe
+    :config
+    ;; (setq ivy-posframe-display-functions-alist '((t . ivy-posframe-display)))
+    (setq ivy-posframe-display-functions-alist '((t . ivy-posframe-display-at-frame-center)))
+    ;; (setq ivy-posframe-display-functions-alist '((t . ivy-posframe-display-at-window-center)))
+    ;; (setq ivy-posframe-display-functions-alist '((t . ivy-posframe-display-at-frame-bottom-left)))
+    ;; (setq ivy-posframe-display-functions-alist '((t . ivy-posframe-display-at-window-bottom-left)))
+    ;; (setq ivy-posframe-display-functions-alist '((t . ivy-posframe-display-at-frame-top-center)))
+    (ivy-posframe-mode 1))
+#+end_src
+
+** =helpful=
+
+Helpful is an alternative to the built-in Emacs help that provides much more contextual information.
+[[https://github.com/Wilfred/helpful][More Information]]
+
+#+begin_src emacs-lisp
+  (use-package helpful
+    :bind
+    ([remap describe-function] . helpful-function)
+    ([remap describe-command] . helpful-command)
+    ([remap describe-variable] . helpful-variable)
+    ([remap describe-key] . helpful-key)
+    :config
+    (setq counsel-describe-function-function #'helpful-callable)
+    (setq counsel-describe-variable-function #'helpful-variable))
+#+end_src
+
+** =undo-tree=
+
+=undo-tree=, a feature that provides a visualization of the undos in a file.
+
+[[https://www.emacswiki.org/emacs/UndoTree][More Information]]
+
+#+begin_src emacs-lisp
+  (use-package undo-tree
+    :diminish undo-tree-mode
+    :init
+    (global-undo-tree-mode)
+    :config
+    (setq undo-tree-visualizer-diff t)
+    (setq undo-tree-visualizer-timestamps t))
+#+end_src
+
+** =color-rg=
+
+=color rg= is a search and refactoring tool based on *ripgrep*.
+
+[[https://github.com/manateelazycat/color-rg][More Information]]
+
+#+begin_src emacs-lisp
+  (use-package color-rg
+    :straight
+    (color-rg :type git :host github :repo "manateelazycat/color-rg")
+    :bind
+    ("C-M-s" . color-rg-search-input))
+#+end_src
+
+** =Dired=
+
+=Dired= is the built-in directory editor
+
+[[https://www.gnu.org/software/emacs/manual/html_node/emacs/Dired.html][More Information]]
+
+#+begin_src emacs-lisp
+  (use-package dired
+    :straight nil
+    :bind
+    (("C-x C-j" . dired-jump)
+     ("C-x j" . dired-jump-other-window))
+    :custom
+    ;; Always delete and copy recursively
+    (dired-recursive-deletes 'always)
+    (dired-recursive-copies 'always)
+    ;; Auto refresh Dired, but be quiet about it
+    (global-auto-revert-non-file-buffers t)
+    (auto-revert-verbose nil)
+    ;; Quickly copy/move file in Dired
+    (dired-dwim-target t)
+    ;; Move files to trash when deleting
+    (delete-by-moving-to-trash t)
+    ;; Load the newest version of a file
+    (load-prefer-newer t)
+    ;; Detect external file changes and auto refresh file
+    (auto-revert-use-notify nil)
+    (auto-revert-interval 3) ; Auto revert every 3 sec
+    :config
+    ;; Enable global auto-revert
+    (global-auto-revert-mode t)
+    ;; sort directory first
+    (setq insert-directory-program "gls" dired-use-ls-dired t)
+    (setq dired-listing-switches "-laXGh --group-directories-first")
+    ;; Reuse same dired buffer, to prevent numerous buffers while navigating in dired
+    (put 'dired-find-alternate-file 'disabled nil)
+    :hook
+    (dired-mode . (lambda ()
+                    (local-set-key (kbd "<mouse-2>") #'dired-find-alternate-file)
+                    (local-set-key (kbd "RET") #'dired-find-alternate-file)
+                    (local-set-key (kbd "^")
+                                   (lambda () (interactive) (find-alternate-file ".."))))))
+#+end_src
+
+** =disk-usage=
+
+=disk-usage= is a file system analyzer that offers a tabulated view of file listings sorted by size.
+
+[[https://gitlab.com/ambrevar/emacs-disk-usage][More Information]]
+
+#+begin_src emacs-lisp
+  (use-package disk-usage)
+#+end_src
+
+** =restart-emacs=
+
+=restart-emacs= is a simple emacs package to restart emacs from within emacs.
+
+[[https://github.com/iqbalansari/restart-emacs][More Information]]
+
+#+begin_src emacs-lisp
+  (use-package restart-emacs)
+#+end_src
+
+* Navigation
+** =ace-window=
+
+=ace-window= offers fast window navigation with [[https://github.com/zamansky/using-emacs/blob/master/myinit.org#ace-windows-for-easy-window-switching][customizable]] prompts.
+
+[[https://github.com/abo-abo/ace-window][More Information]]
+
+#+begin_src emacs-lisp
+  (use-package ace-window
+    :bind
+    ("C-x C-o" . ace-window)
+    ("C-x o" . ace-window)
+    :init
+    (custom-set-faces
+     '(aw-leading-char-face
+       ((t (:inherit fixed-pitch :height 4.0 :foreground "firebrick3"))))))
+#+end_src
+
+** =winner-mode=
+
+Built-in =winner-mode= for remembering previous window actions.
+
+#+begin_src emacs-lisp
+  (winner-mode 1)
+#+end_src
+
+* Console
+** =vterm=
+Emacs-libvterm (vterm) is fully-fledged terminal emulator inside GNU Emacs based on libvterm, a C library. As a result of using compiled code (instead of elisp), emacs-libvterm is fully capable, fast, and it can seamlessly handle large outputs.
+[[https://github.com/akermu/emacs-libvterm][More Information]]
+
+=multi-vterm=
+[[https://github.com/suonlight/multi-vterm][More Information]]
+
+#+begin_src emacs-lisp
+  (use-package vterm
+    ;; add functionality for counsel-yank-pop
+    :after counsel
+    :init
+    ;; Counsel-yank-pop
+    (defun vterm-counsel-yank-pop-action (orig-fun &rest args)
+      (if (equal major-mode 'vterm-mode)
+          (let ((inhibit-read-only t)
+                (yank-undo-function (lambda (_start _end) (vterm-undo))))
+            (cl-letf (((symbol-function 'insert-for-yank)
+                       (lambda (str) (vterm-send-string str t))))
+              (apply orig-fun args)))
+        (apply orig-fun args)))
+
+    (advice-add 'counsel-yank-pop-action :around #'vterm-counsel-yank-pop-action)
+    (setq vterm-max-scrollback 10000))
+
+  ;; (use-package multi-vterm)
+#+end_src
+
+* General Programming
+** Magit
+
+Magit is an interface to the version control system Git, implemented as an Emacs package. Magit aspires to be a complete Git porcelain.
+
+[[https://magit.vc/][More Information]]
+
+#+begin_src emacs-lisp
+  (use-package magit
+    :bind
+    ("C-x g" . magit-status))
+#+end_src
+
+** Projectile
+
+Projectile is a project interaction library for Emacs.
+
+[[https://docs.projectile.mx/projectile/index.html][More Information]]
+
+#+begin_src emacs-lisp
+  (use-package projectile
+    :diminish
+    :config
+    (define-key projectile-mode-map (kbd "s-p") 'projectile-command-map)
+    (setq projectile-completion-system 'ivy)
+    (projectile-mode +1))
+#+end_src
+
+** =treemacs=
+
+=treemacs= is a file and project explorer similar to NeoTree or vim’s NerdTree, but largely inspired by the Project Explorer in Eclipse.
+
+[[https://github.com/Alexander-Miller/treemacs][More Information]]
+
+#+begin_src emacs-lisp
+  (use-package treemacs
+    :defer t
+    :init
+    (with-eval-after-load 'winum
+      (define-key winum-keymap (kbd "M-0") #'treemacs-select-window))
+    :config
+    (progn
+      (setq treemacs-collapse-dirs                 (if treemacs-python-executable 3 0)
+            treemacs-deferred-git-apply-delay      0.5
+            treemacs-directory-name-transformer    #'identity
+            treemacs-display-in-side-window        t
+            treemacs-eldoc-display                 t
+            treemacs-file-event-delay              5000
+            treemacs-file-extension-regex          treemacs-last-period-regex-value
+            treemacs-file-follow-delay             0.2
+            treemacs-file-name-transformer         #'identity
+            treemacs-follow-after-init             t
+            treemacs-expand-after-init             t
+            treemacs-git-command-pipe              ""
+            treemacs-goto-tag-strategy             'refetch-index
+            treemacs-indentation                   2
+            treemacs-indentation-string            " "
+            treemacs-is-never-other-window         nil
+            treemacs-max-git-entries               5000
+            treemacs-missing-project-action        'ask
+            treemacs-move-forward-on-expand        nil
+            treemacs-no-png-images                 nil
+            treemacs-no-delete-other-windows       t
+            treemacs-project-follow-cleanup        nil
+            treemacs-persist-file                  (expand-file-name ".cache/treemacs-persist" user-emacs-directory)
+            treemacs-position                      'left
+            treemacs-read-string-input             'from-child-frame
+            treemacs-recenter-distance             0.1
+            treemacs-recenter-after-file-follow    nil
+            treemacs-recenter-after-tag-follow     nil
+            treemacs-recenter-after-project-jump   'always
+            treemacs-recenter-after-project-expand 'on-distance
+            treemacs-litter-directories            '("/node_modules" "/.venv" "/.cask")
+            treemacs-show-cursor                   nil
+            treemacs-show-hidden-files             t
+            treemacs-silent-filewatch              nil
+            treemacs-silent-refresh                nil
+            treemacs-sorting                       'alphabetic-asc
+            treemacs-space-between-root-nodes      t
+            treemacs-tag-follow-cleanup            t
+            treemacs-tag-follow-delay              1.5
+            treemacs-user-mode-line-format         nil
+            treemacs-user-header-line-format       nil
+            treemacs-width                         35
+            treemacs-workspace-switch-cleanup      nil)
+
+      ;; The default width and height of the icons is 22 pixels. If you are
+      ;; using a Hi-DPI display, uncomment this to double the icon size.
+      ;;(treemacs-resize-icons 44)
+
+      (treemacs-follow-mode t)
+      (treemacs-filewatch-mode t)
+      (treemacs-fringe-indicator-mode 'always)
+      (pcase (cons (not (null (executable-find "git")))
+                   (not (null treemacs-python-executable)))
+        (`(t . t)
+         (treemacs-git-mode 'deferred))
+        (`(t . _)
+         (treemacs-git-mode 'simple))))
+    :bind
+    (:map global-map
+          ("M-0"       . treemacs-select-window)
+          ("C-x t 1"   . treemacs-delete-other-windows)
+          ("C-x t t"   . treemacs)
+          ("C-x t B"   . treemacs-bookmark)
+          ("C-x t C-t" . treemacs-find-file)
+          ("C-x t M-t" . treemacs-find-tag)))
+
+  (use-package treemacs-projectile
+    :after (treemacs projectile))
+
+  (use-package treemacs-icons-dired
+    :after (treemacs dired)
+    :config (treemacs-icons-dired-mode))
+
+  (use-package treemacs-magit
+    :after (treemacs magit))
+#+end_src
+
+** Dump Jump
+
+An Emacs "jump to definition" package for 40+ languages
+
+[[https://github.com/jacktasia/dumb-jump][More Information]]
+
+#+begin_src emacs-lisp
+  (use-package dumb-jump
+    :bind
+    (:map prog-mode-map
+          (("C-c C-o" . dumb-jump-go-other-window)
+           ("C-c C-j" . dumb-jump-go)
+           ("C-c C-i" . dumb-jump-go-prompt)))
+    :custom (dumb-jump-selector 'ivy))
+#+end_src
+
+** =iedit=
+
+=iedit= allows you to edit multiple occurrences of a symbol or region.
+
+[[https://www.emacswiki.org/emacs/Iedit][More Information]]
+
+#+begin_src emacs-lisp
+  (use-package iedit
+    :bind
+    ("M-;" . iedit-mode))
+#+end_src
+
+** =format-all=
+
+=format-all= let one auto-format source code in many languages using the same command.
+[[https://github.com/lassik/emacs-format-all-the-code][More Information]]
+
+#+begin_src emacs-lisp
+  (use-package format-all)
+#+end_src
+
+** =evil-nerd-commenter=
+
+=evil-nerd-commenter= lets one comment/uncomment lines efficiently. Like Nerd Commenter in VIM
+
+[[https://github.com/redguardtoo/evil-nerd-commenter][More Information]]
+
+#+begin_src emacs-lisp
+  (use-package evil-nerd-commenter
+    :bind
+    ("C-;" . evilnc-comment-or-uncomment-lines))
+#+end_src
+
+** =yasnippets=
+
+#+begin_src emacs-lisp
+  (use-package yasnippet
+    :diminish yas-minor-mode
+    :init (use-package yasnippet-snippets :after yasnippet)
+    :config
+    (yas-global-mode 1))
+#+end_src
+
+** =flycheck=
+
+Flycheck is a modern on-the-fly syntax checking extension for GNU Emacs, intended as replacement for the older Flymake extension which is part of GNU Emacs.
+
+[[https://www.flycheck.org/en/latest/][More Information]]
+
+#+begin_src emacs-lisp
+  (use-package flycheck
+    :diminish
+    :init
+    (global-flycheck-mode)
+    :hook
+    (prog-mode . flycheck-mode))
+#+end_src
+
+** =Expand-region=
+[[https://github.com/magnars/expand-region.el][More Information]]
+
+#+begin_src emacs-lisp
+  (use-package expand-region
+    :bind ("C-=" . er/expand-region))
+#+end_src
+
+** LSP Python MS
+
+=lsp-mode= client leveraging the Microsoft's [[https://github.com/Microsoft/python-language-server][python-language-server]].
+
+[[https://emacs-lsp.github.io/lsp-python-ms/][Installation and More Information]]
+
+#+begin_src emacs-lisp
+  (use-package lsp-python-ms
+    :disabled
+    :hook (python-mode . (lambda ()
+                           (require 'lsp-python-ms)
+                           (lsp-deferred)))
+    :init
+    (setq lsp-python-ms-auto-install-server t)
+    ;; for executable of language server, if it's not symlinked on your PATH
+    (setq lsp-python-ms-executable
+          "~/.emacs.d/python-language-server/output/bin/Release/osx-x64/publish/Microsoft.Python.LanguageServer"))
+#+end_src
+
+** =lsp-pyright=
+[[https://emacs-lsp.github.io/lsp-pyright/][More Information]]
+
+#+begin_src emacs-lisp
+  (use-package lsp-pyright
+    :hook (python-mode . (lambda ()
+                           (require 'lsp-pyright)
+                           (lsp-deferred))))
+#+end_src
+
+** =lsp-mode=
+
+ LSP Mode - Language Server Protocol support for Emacs
+ Language Server Protocol support with multiples languages support for Emacs
+
+ [[https://emacs-lsp.github.io/lsp-mode/][More Information]]
+
+#+begin_src emacs-lisp
+  (use-package lsp-mode
+    :init
+    ;; set prefix for lsp-command-keymap (few alternatives - "C-l", "C-c l")
+    (setq lsp-keymap-prefix "C-c l")
+    :hook (;; replace XXX-mode with concrete major-mode(e. g. python-mode)
+           (html-mode . lsp-deferred)
+           (json-mode . lsp-deferred)
+           (python-mode . lsp-deferred)
+           ;; if you want which-key integration
+           (lsp-mode . lsp-enable-which-key-integration))
+    :commands lsp
+    :config
+    (setq lsp-idle-delay 0.500)
+    (setq lsp-log-io nil) ; if set to true can cause a performance hit
+    )
+#+end_src
+
+** =lsp-ui=
+
+ UI integration's for lsp-mode
+
+ [[https://emacs-lsp.github.io/lsp-ui/][More Information]]
+
+#+begin_src emacs-lisp
+  (use-package lsp-ui
+    :commands lsp-ui-mode
+    :bind
+    ;; lsp-ui-peek
+    ((:map lsp-ui-mode-map
+           ([remap xref-find-definitions] . lsp-ui-peek-find-definitions)
+           ([remap xref-find-references] . lsp-ui-peek-find-references)
+           ;; lsp-ui-doc
+           ("M-i" . lsp-ui-doc-focus-frame))
+     ("s-i" . my/toggle-lsp-ui-doc))
+    :preface
+    (defun my/toggle-lsp-ui-doc ()
+      (interactive)
+      (if lsp-ui-doc-mode
+          (progn
+            (lsp-ui-doc-mode -1)
+            (lsp-ui-doc--hide-frame))
+        (lsp-ui-doc-mode 1))))
+#+end_src
+
+** =lsp-treemacs=
+
+[[https://github.com/emacs-lsp/lsp-treemacs][More Information]]
+
+#+begin_src emacs-lisp
+  (use-package lsp-treemacs
+    :commands lsp-treemacs-errors-list
+    :config
+    (lsp-treemacs-sync-mode 1))
+#+end_src
+
+** =lsp-ivy=
+
+[[https://github.com/emacs-lsp/lsp-ivy][More Informatino]]
+
+#+begin_src emacs-lisp
+  (use-package lsp-ivy :commands lsp-ivy-workspace-symbol)
+#+end_src
+
+** =company=
+*** =company-mode=
+
+#+begin_src emacs-lisp
+  (use-package company
+    :diminish company-mode
+    :hook
+    (after-init . global-company-mode)
+    :bind
+    ((:map company-active-map
+           ("C-n" . company-select-next)
+           ("C-p" . company-select-previous))
+     (:map company-search-map
+           ("C-n" . company-select-next)
+           ("C-p" . company-select-previous)))
+    :config
+    (setq company-minimum-prefix-length 1)
+    (setq company-idle-delay 0.0)
+    (setq company-echo-delay 0.0)
+    ;; (setq company-tooltip-idle-delay 0.0)
+    ;; (setq company-tooltip-align-annotations t)
+    (setq company-require-match nil)
+    (setq company-show-numbers t)
+    (setq company-dabbrev-downcase nil) ;; case insensitive for dabbrev backend
+    (global-company-mode 1)
+    ;; Don't use company in debugger mode
+    (setq company-global-modes '(not gud-mode)))
+#+end_src
+
+*** =company-box=
+
+#+begin_src emacs-lisp :tangle no
+  (use-package company-box
+    :diminish
+    :hook
+    (company-mode . company-box-mode)
+    ;; :defines company-box-icons-all-the-icons
+    :init (setq company-box-backends-colors nil
+                company-box-highlight-prefix t)
+    :config
+    (setq company-box-doc-delay 0)
+    (setq company-box-enable-icon t)
+    (setq company-box-color-icons nil)
+    (setq company-box-max-candidates 10)
+    (setq company-box-show-single-candidate t)
+    )
+    ;; ;; all-the-icons-integration
+    ;; (with-no-warnings
+    ;;   ;; Prettify icons
+    ;;   (defun my-company-box-icons--elisp (candidate)
+    ;;     (when (derived-mode-p 'emacs-lisp-mode)
+    ;;       (let ((sym (intern candidate)))
+    ;;         (cond ((fboundp sym) 'Function)
+    ;;               ((featurep sym) 'Module)
+    ;;               ((facep sym) 'Color)
+    ;;               ((boundp sym) 'Variable)
+    ;;               ((symbolp sym) 'Text)
+    ;;               (t . nil)))))
+    ;;   (advice-add #'company-box-icons--elisp :override #'my-company-box-icons--elisp))
+
+    ;; (declare-function all-the-icons-faicon 'all-the-icons)
+    ;; (declare-function all-the-icons-material 'all-the-icons)
+    ;; (declare-function all-the-icons-octicon 'all-the-icons)
+    ;; (setq company-box-icons-all-the-icons
+    ;;       `((Unknown . ,(all-the-icons-material "find_in_page" :height 0.8 :v-adjust -0.15))
+    ;;         (Text . ,(all-the-icons-faicon "text-width" :height 0.8 :v-adjust -0.02))
+    ;;         (Method . ,(all-the-icons-faicon "cube" :height 0.8 :v-adjust -0.02 :face 'all-the-icons-purple))
+    ;;         (Function . ,(all-the-icons-faicon "cube" :height 0.8 :v-adjust -0.02 :face 'all-the-icons-purple))
+    ;;         (Constructor . ,(all-the-icons-faicon "cube" :height 0.8 :v-adjust -0.02 :face 'all-the-icons-purple))
+    ;;         (Field . ,(all-the-icons-octicon "tag" :height 0.85 :v-adjust 0 :face 'all-the-icons-lblue))
+    ;;         (Variable . ,(all-the-icons-octicon "tag" :height 0.85 :v-adjust 0 :face 'all-the-icons-lblue))
+    ;;         (Class . ,(all-the-icons-material "settings_input_component" :height 0.8 :v-adjust -0.15 :face 'all-the-icons-orange))
+    ;;         (Interface . ,(all-the-icons-material "share" :height 0.8 :v-adjust -0.15 :face 'all-the-icons-lblue))
+    ;;         (Module . ,(all-the-icons-material "view_module" :height 0.8 :v-adjust -0.15 :face 'all-the-icons-lblue))
+    ;;         (Property . ,(all-the-icons-faicon "wrench" :height 0.8 :v-adjust -0.02))
+    ;;         (Unit . ,(all-the-icons-material "settings_system_daydream" :height 0.8 :v-adjust -0.15))
+    ;;         (Value . ,(all-the-icons-material "format_align_right" :height 0.8 :v-adjust -0.15 :face 'all-the-icons-lblue))
+    ;;         (Enum . ,(all-the-icons-material "storage" :height 0.8 :v-adjust -0.15 :face 'all-the-icons-orange))
+    ;;         (Keyword . ,(all-the-icons-material "filter_center_focus" :height 0.8 :v-adjust -0.15))
+    ;;         (Snippet . ,(all-the-icons-material "format_align_center" :height 0.8 :v-adjust -0.15))
+    ;;         (Color . ,(all-the-icons-material "palette" :height 0.8 :v-adjust -0.15))
+    ;;         (File . ,(all-the-icons-faicon "file-o" :height 0.8 :v-adjust -0.02))
+    ;;         (Reference . ,(all-the-icons-material "collections_bookmark" :height 0.8 :v-adjust -0.15))
+    ;;         (Folder . ,(all-the-icons-faicon "folder-open" :height 0.8 :v-adjust -0.02))
+    ;;         (EnumMember . ,(all-the-icons-material "format_align_right" :height 0.8 :v-adjust -0.15))
+    ;;         (Constant . ,(all-the-icons-faicon "square-o" :height 0.8 :v-adjust -0.1))
+    ;;         (Struct . ,(all-the-icons-material "settings_input_component" :height 0.8 :v-adjust -0.15 :face 'all-the-icons-orange))
+    ;;         (Event . ,(all-the-icons-octicon "zap" :height 0.8 :v-adjust 0 :face 'all-the-icons-orange))
+    ;;         (Operator . ,(all-the-icons-material "control_point" :height 0.8 :v-adjust -0.15))
+    ;;         (TypeParameter . ,(all-the-icons-faicon "arrows" :height 0.8 :v-adjust -0.02))
+    ;;         (Template . ,(all-the-icons-material "format_align_left" :height 0.8 :v-adjust -0.15)))
+    ;;       company-box-icons-alist 'company-box-icons-all-the-icons))
+#+end_src
+** =company-tabnine=
+- [[https://github.com/TommyX12/company-tabnine][More Information]]
+- [[https://github.com/MatthewZMD/.emacs.d#company-tabnine][Config from MatthewZMD]]
+
+#+begin_src emacs-lisp
+  (use-package company-tabnine
+    :defer 1
+    :custom
+    (company-tabnine-max-num-results 9)
+    :init
+    (defun company-tabnine-toggle (&optional enable)
+      "Enable/Disable TabNine. If ENABLE is non-nil, definitely enable it."
+      (interactive)
+      (if (or enable (not (memq 'company-tabnine company-backends)))
+          (progn
+            (add-hook 'lsp-after-open-hook #'lsp-after-open-tabnine)
+            (add-to-list 'company-backends #'company-tabnine)
+            (when (bound-and-true-p lsp-mode) (lsp-after-open-tabnine))
+            (message "TabNine enabled."))
+        (setq company-backends (delete 'company-tabnine company-backends))
+        (setq company-backends (delete '(company-capf :with company-tabnine :separate) company-backends))
+        (remove-hook 'lsp-after-open-hook #'lsp-after-open-tabnine)
+        (company-tabnine-kill-process)
+        (message "TabNine disabled.")))
+    (defun company//sort-by-tabnine (candidates)
+      "Integrate company-tabnine with lsp-mode"
+      (if (or (functionp company-backend)
+              (not (and (listp company-backend) (memq 'company-tabnine company-backends))))
+          candidates
+        (let ((candidates-table (make-hash-table :test #'equal))
+              candidates-lsp
+              candidates-tabnine)
+          (dolist (candidate candidates)
+            (if (eq (get-text-property 0 'company-backend candidate)
+                    'company-tabnine)
+                (unless (gethash candidate candidates-table)
+                  (push candidate candidates-tabnine))
+              (push candidate candidates-lsp)
+              (puthash candidate t candidates-table)))
+          (setq candidates-lsp (nreverse candidates-lsp))
+          (setq candidates-tabnine (nreverse candidates-tabnine))
+          (nconc (seq-take candidates-tabnine 3)
+                 (seq-take candidates-lsp 6)))))
+    (defun lsp-after-open-tabnine ()
+      "Hook to attach to `lsp-after-open'."
+      (setq-local company-tabnine-max-num-results 3)
+      (add-to-list 'company-transformers 'company//sort-by-tabnine t)
+      (add-to-list 'company-backends '(company-capf :with company-tabnine :separate)))
+    :hook
+    (kill-emacs . company-tabnine-kill-process)
+    :config
+    (company-tabnine-toggle t))
+#+end_src
+
+** =smartparens=
+[[https://github.com/Fuco1/smartparens][More Information]]
+
+#+begin_src emacs-lisp
+  (use-package smartparens
+    :init
+    (progn
+      (smartparens-global-mode 1)
+      (show-smartparens-global-mode 1))
+    :config
+    (progn
+      (setq smartparens-strict-mode t)
+      (setq sp-show-pair-from-inside nil)
+      (sp-local-pair 'emacs-lisp-mode "`" nil :when '(sp-in-string-p))))
+#+end_src
+** =conda=
+
+This package lets you activate your conda environments. The setup works for miniconda installed by hombre.
+
+[[https://github.com/necaris/conda.el][More Information]]
+
+Usage:
+- ~M-x conda-env-activate~
+- ~M-x conda-env-deactivate~
+
+#+begin_src emacs-lisp
+  (use-package conda
+    :hook
+    (python-mode . (lambda () (conda-env-activate "py3")))
+    :config
+    (conda-env-initialize-interactive-shells) ;; interactive shell support
+    ;; (conda-env-initialize-eshell)             ;; eshell support
+    ;; (conda-env-autoactivate-mode t)           ;; autoactivate
+    (setq conda-env-home-directory "/usr/local/Caskroom/miniconda/base/")
+    (setq conda-anaconda-home "/usr/local/Caskroom/miniconda/base/"))
+#+end_src
+
+** =py-autopep8=
+
+=py-autopep8= provides commands to tidy up the current buffer.
+[[https://github.com/paetzke/py-autopep8.el][More Information]]
+
+#+begin_src emacs-lisp
+  (use-package py-autopep8
+    :config
+    (setq py-autopep8-options '("--max-line-length=80")))
+#+end_src
+
+** =py-cmd-buffer.el=
+*** =buftra=
+#+begin_src emacs-lisp :tangle no
+  (use-package buftra
+    :load-path (lambda () (expand-file-name "site-elisp/buftra.el" user-emacs-directory)))
+#+end_src
+
+
+#+begin_src emacs-lisp :tangle no
+  (use-package py-pyment
+    :load-path (lambda () (expand-file-name "site-elisp/py-cmd-buffer.el" user-emacs-directory))
+    :config
+    (setq py-pyment-options '("--output=numpydoc")))
+  ;; /usr/local/Caskroom/miniconda/base/bin/pyment
+#+end_src
+
+* Python
+
+Some python settings. Setup jupyter keybindings.
+
+#+begin_src emacs-lisp
+  (defun my/jupyter-load-file ()
+    "Send current buffer to jupyter kernel by default"
+    (interactive)
+    (jupyter-load-file (buffer-file-name)))
+
+  (use-package python
+    :hook
+    (python-mode . (lambda () ;; emulate python-shell-send-buffer
+                     (display-fill-column-indicator-mode) ;; display column
+                     (unbind-key "C-c C-l" jupyter-repl-interaction-mode-map)
+                     (bind-key "C-c C-c" 'my/jupyter-load-file jupyter-repl-interaction-mode-map)))
+    :config
+    ;; silence indentation guesses
+    (setq python-indent-guess-indent-offset-verbose nil))
+#+end_src
+
+** =emacs-jupyter=
+[[https://github.com/nnicandro/emacs-jupyter][More Information]]
+
+#+begin_src emacs-lisp
+  (use-package jupyter
+    :bind
+    (:map python-mode-map
+          ("C-c C-p" . jupyter-run-repl))
+    :init
+    (setq jupyter-repl-echo-eval-p t))
+#+end_src
+
+* Java
+** =lsp-java=
+=lsp-mode= for =java=
+[[https://emacs-lsp.github.io/lsp-java/][More Information]]
+
+#+begin_src emacs-lisp :tangle no
+  (use-package lsp-java
+    :hook
+    (java-mode . lsp))
+#+end_src
+
+** =java-one-click-run=
+[[https://github.com/MatthewZMD/java-one-click-run][More Information]]
+#+begin_src emacs-lisp :tangle no
+  (defun my/java-one-click-run ()
+    "Go to previous window after running"
+    (interactive)
+    (java-one-click-run)
+    (select-window (previous-window)))
+
+  (use-package java-one-click-run
+    :load-path "~/.emacs.d/site-elisp/java-one-click-run/"
+    :init (use-package shell-here)
+    :hook
+    (java-mode . (lambda () ;; compile and run java program with C-c C-c
+                   (unbind-key "C-c C-C" lsp-mode-map)
+                   (bind-key "C-c C-c" 'my/java-one-click-run java-mode-map))))
+#+end_src
+* Markdown
+** =markdown-mode=
+[[https://jblevins.org/projects/markdown-mode/][More Information]]
+
+#+begin_src emacs-lisp
+  (use-package markdown-mode
+    :commands (markdown-mode gfm-mode)
+    :hook
+    (markdown-mode . (lambda ()
+                       (remove-hook 'before-save-hook 'delete-trailing-whitespace t)
+                       (display-fill-column-indicator-mode)
+                       (auto-fill-mode)))
+    :mode (("README\\.md\\'" . gfm-mode)
+           ("\\.md\\'" . markdown-mode)
+           ("\\.markdown\\'" . markdown-mode))
+    :init (setq markdown-command "multimarkdown"))
+#+end_src
+
+** =grip=
+[[https://github.com/seagle0128/grip-mode][More Information]]
+#+begin_src emacs-lisp :tangle no
+  (use-package grip-mode
+    ;; :init
+    ;; (progn
+    ;;   (require 'auth-source)
+    ;;   (let ((credential (auth-source-user-and-password "api.github.com")))
+    ;;     (setq grip-github-user (car credential)
+    ;;           grip-github-password (cadr credential))))
+    :bind (:map markdown-mode-command-map
+                ("g" . grip-mode)))
+
+#+end_src
+
+* SQL
+** =pgformatter=
+[[https://arjanvandergaag.nl/blog/using-emacs-as-a-database-client.html][More Information]]
+
+*Prerequisite*
+#+begin_src shell :tangle no
+  brew install pgformatter
+#+end_src
+
+#+begin_src emacs-lisp :tangle no
+  (use-package sqlformat
+    :commands (sqlformat sqlformat-buffer sqlformat-region)
+    :hook (sql-mode . sqlformat-on-save-mode)
+    :init
+    (setq sqlformat-command 'pgformatter
+          sqlformat-args '("-s2" "-g" "-u1")))
+#+end_src
+
+* Web Development
+** Javascript
+*** RSJX mode
+#+begin_src emacs-lisp
+  (use-package rjsx-mode
+    :mode
+    (("\\.js\\'" . rjsx-mode)
+     ("\\.tsx\\'" . rjsx-mode)
+     ("\\.ts\\'" . rjsx-mode)))
+  #+end_src
+
+*** Tide
+#+begin_src emacs-lisp
+  (defun my/setup-tide-mode()
+    "Setup function for tide"
+    (interactive)
+    (tide-setup)
+    (flycheck-mode +1)
+    (setq flycheck-check-syntax-automatically '(save mode-enabled))
+    (tide-hl-identifier-mode +1))
+
+  (use-package tide
+    :after
+    (rjsx-mode)
+    :hook
+    (rjsx-mode . my/setup-tide-mode))
+#+end_src
+
+*** Prettier
+#+begin_src emacs-lisp
+  (use-package prettier-js
+    :after
+    (rjsx-mode)
+    :hook
+    (rjsx-mode . prettier-js-mode))
+#+end_src
+** =CSS=
+*** =lsp-css=
+[[https://emacs-lsp.github.io/lsp-mode/page/lsp-css/][More Information]]
+
+*Install:*
+- ~M-x lsp-install-server css-ls~
+#+begin_src emacs-lisp
+  (use-package css-mode
+    :hook
+    (css-mode . lsp))
+#+end_src
+
+** =HTML=
+[[https://emacs-lsp.github.io/lsp-mode/page/lsp-html/][More Information]]
+
+*Install:*
+- ~M-x lsp-install-server html-ls~
+#+begin_src emacs-lisp :tangle no
+  (use-package mhtml-mode
+    :hook
+    (mhtml-mode . (lambda()
+                    (lsp)
+                    (unbind-key "C-c C-v" mhtml-mode-map)
+                    (bind-key "C-c C-v" 'my/browse-url-of-buffer-with-chrome))))
+#+end_src
+
+** =JSON=
+
+[[https://github.com/joshwnj/json-mode][More Information]]
+
+*Install*
+- ~M-x lsp-install-server json-ls~
+#+begin_src emacs-lisp
+  (use-package json-mode
+    :mode "\\.json\\'"
+    :hook
+    (json-mode . lsp))
+#+end_src
+
+** =YAML=
+[[https://github.com/yoshiki/yaml-mode][More Information]]
+#+begin_src emacs-lisp
+  (use-package yaml-mode
+    :mode
+    ("\\.ya?ml\\'"))
+#+end_src
+** =CSV=
+[[https://github.com/jcf/emacs.d/blob/master/init-languages.org#csv][More Information]]
+#+begin_src emacs-lisp
+  (use-package csv-mode
+    :mode "\\.[Cc][Ss][Vv]\\'"
+    ;; :init (setq csv-separators '("," ";" "|" " "))
+    :config
+    (setq csv-separators '(",")))
+#+end_src
+
+* Appearance
+** Icons
+*** =all-the-icons=
+
+ All The Icons, a utility package to collect various Icon Fonts. Enable only in GUI Emacs.
+
+[[https://github.com/domtronn/all-the-icons.el][More Information]]
+
+#+begin_src shell :tangle no
+  M-x all-the-icons-install-fonts
+#+end_src
+
+ #+begin_src emacs-lisp
+   (use-package all-the-icons)
+ #+end_src
+
+*** =all-the-icons-ivy-rich=
+
+[[https://github.com/seagle0128/all-the-icons-ivy-rich][More Information]]
+
+  #+begin_src emacs-lisp
+    (use-package all-the-icons-ivy-rich
+      :config
+      (all-the-icons-ivy-rich-mode 1))
+  #+end_src
+
+*** =ivy-rich=
+
+More friendly interface for ivy.
+[[https://github.com/Yevgnen/ivy-rich][More Information]]
+
+#+begin_src emacs-lisp
+  (use-package ivy-rich
+    :config
+    (ivy-rich-mode 1)
+    (setcdr (assq t ivy-format-functions-alist) #'ivy-format-function-line))
+#+end_src
+
+*** =all-the-icons-dired=
+
+#+begin_src emacs-lisp
+  (use-package all-the-icons-dired
+    :diminish
+    :custom-face
+    (all-the-icons-dired-dir-face ((t (:foreground nil))))
+    :hook
+    (dired-mode . all-the-icons-dired-mode))
+#+end_src
+
+*** =mode-icons=
+
+#+begin_src emacs-lisp
+  (use-package mode-icons
+    :config
+    (mode-icons-mode))
+#+end_src
+
+** Themes
+*** Doom Theme
+
+Doom Themes, an UI plugin and pack of themes
+
+[[https://github.com/hlissner/emacs-doom-themes][More Information]]
+
+#+begin_src emacs-lisp
+  (use-package doom-themes
+    :custom-face
+    (cursor ((t (:background "DarkRed"))))
+    :config
+    (load-theme 'doom-gruvbox t)
+
+    (doom-themes-visual-bell-config)  ;; flashing mode-line on errors
+
+    ;; (setq doom-themes-treemacs-theme "doom-colors") ; use the colorful treemacs theme
+    ;; (doom-themes-treemacs-config)
+
+    (doom-themes-org-config)          ;; Corrects (and improves) org-mode's native fontification.
+    )
+
+    ;; (load-theme 'doom-city-lights t))
+    ;; (load-theme 'doom-molokai t)
+    ;; (load-theme 'doom-sourcerer t)
+    ;; (load-theme 'doom-tomorrow-night t)
+    ;; (load-theme 'doom-gruvbox t)
+#+end_src
+
+*** Doom Modeline
+
+Doom Modeline, a modeline from DOOM Emacs, but more powerful and faster.
+
+[[https://github.com/seagle0128/doom-modeline][More Information]]
+
+#+begin_src emacs-lisp
+  (use-package doom-modeline
+    :init
+    (doom-modeline-mode 1)
+    :config
+    ;; (setq inhibit-compacting-font-caches t)
+    (setq doom-modeline-minor-modes nil)
+    (setq doom-modeline-icon t)
+    (setq doom-modeline-major-mode-color-icon t)
+    (setq doom-modeline-height 15))
+#+end_src
+
+*** Other Themes
+
+#+begin_src emacs-lisp
+  ;; (use-package spacemacs-theme
+  ;;   :config
+  ;;   (load-theme spacemacs-theme-light))
+  ;; ;; (use-package solarized-theme)
+  ;; (use-package darktooth-theme)
+  ;; (use-package kaolin-themes)
+  ;; (use-package gruvbox-theme
+  ;;   :config
+  ;;   (load-theme 'gruvbox))
+#+end_src
+
+** =beacon=
+
+[[https://github.com/Malabarba/beacon][More Information]]
+
+#+begin_src emacs-lisp
+  (use-package beacon
+    :config
+    (beacon-mode 1)
+    (setq beacon-color "#39FF14"))
+#+end_src
+
+** =rainbow-delimiters=
+
+[[https://github.com/Fanael/rainbow-delimiters][More Information]]
+
+#+begin_src emacs-lisp
+  (use-package rainbow-delimiters
+    :hook
+    (prog-mode . rainbow-delimiters-mode))
+#+end_src
+
+** =dimmer.el=
+
+[[https://github.com/gonewest818/dimmer.el][More Information]]
+
+#+begin_src emacs-lisp
+  (use-package dimmer
+    :config
+    (setq dimmer-fraction 0.5)
+    (dimmer-mode t))
+#+end_src
+
+** =dashboard=
+
+=dashboard= is an extensible emacs startup screen showing you what's most important.
+[[https://github.com/emacs-dashboard/emacs-dashboard][More Information]]
+
+#+begin_src emacs-lisp :tangle no
+  ;; Dependency
+  (use-package page-break-lines)
+
+  (use-package dashboard
+    :disabled
+    :config
+    (setq show-week-agenda-p t)
+    (dashboard-setup-startup-hook))
+#+end_src
+
+* Latex
+
+Install Latex.
+[[https://people.umass.edu/weikaichen/zh/post/emacs-academic-tools/][More Information]]
+
+#+begin_src emacs-lisp
+  (use-package tex-site
+    :straight auctex
+    :mode ("\\.tex\\'" . latex-mode)
+    :config
+    ;; Enable document parsing to get support for Latex packages
+    (setq TeX-auto-save t)  ;; enable parsing on load
+    (setq TeX-parse-self t) ;; enable parsing on save
+    (setq-default TeX-master nil) ;; make AUCTeX aware of multi-file document structure
+    (setq TeX-view-program-selection '((output-pdf "pdf-tools")))
+    (setq TeX-view-program-list '(("pdf-tools" "TeX-pdf-tools-sync-view")))
+    (setq LaTeX-electric-left-right-brace t)
+    (setq LaTeX-math-menu-unicode t)
+    :hook
+    (LaTeX-mode . (lambda ()
+                    (rainbow-delimiters-mode)
+                    (company-mode)
+                    (turn-on-reftex)
+                    (setq reftex-plug-into-AUCTeX t)
+                    (reftex-isearch-minor-mode)
+                    (turn-on-auto-fill) ;; insert automatically fill and indent linebreaks
+                    (setq TeX-PDF-mode t)
+                    (setq TeX-source-correlate-mode t)
+                    (setq TeX-source-correlate-method 'synctex)
+                    (setq TeX-source-correlate-start-server t)
+                    (pdf-tools-install))) ;; use PDF-tools
+    (LaTeX-mode . LaTeX-math-mode) ;; use latex math mode by default
+    ;; automatically insert '\(...\)' in Latex files by pressing $
+    (LaTeX-mode . (lambda () (set (make-variable-buffer-local 'TeX-electric-math)
+                                  (cons "\\(" "\\)"))))
+    (TeX-after-TeX-LaTeX-command-finished . TeX-revert-document-buffer))
+#+end_src
+
+** =auctex-latexmk=
+
+=auctex-latexmk= adds LatexMk support to =AUCTeX=.
+[[https://github.com/tom-tan/auctex-latexmk][More Information]]
+
+#+begin_src emacs-lisp
+  (use-package auctex-latexmk
+    :config
+    (auctex-latexmk-setup)
+    (setq auctex-latexmk-inherit-TeX-PDF-mode t))
+#+end_src
+
+** =company-auctex=
+
+=company-auctex= is a group of backends for =company-mode= providing auto-completion for =AUCTeX=.
+[[https://github.com/alexeyr/company-auctex][More Information]]
+
+#+begin_src emacs-lisp
+  (use-package company-auctex
+    :init
+    (company-auctex-init))
+#+end_src
+
+** =cdlatex=
+
+=cdlatex= is a minor mode supporting fast insertion of environment templates and math stuff inn $\latex$.
+[[https://github.com/cdominik/cdlatex][More Information]]
+
+#+begin_src emacs-lisp
+  (use-package cdlatex
+    :diminish org-cdlatex-mode)
+#+end_src
+
+** =pdftools=
+
+=pdf-tools= is an Emacs support library for PDF files.
+[[https://github.com/politza/pdf-tools][More Information]]
+
+#+begin_src emacs-lisp
+  (use-package pdf-tools
+    :config
+    (setq pdf-view-display-size 'fit-page)
+    (setq pdf-view-use-unicode-ligther nil)
+    (setq pdf-annot-activate-created-annotations t)
+    (define-key pdf-view-mode-map (kbd "C-s") 'isearch-forward)
+    (pdf-tools-install :no-query))
+#+end_src
+
+** =pdf-view-restore=
+
+=pdf-view-restore= saves the current position in a PDF to resume reading at that place at a later time.
+[[https://github.com/007kevin/pdf-view-restore][More Information]]
+
+#+begin_src emacs-lisp
+  (use-package pdf-view-restore
+    :after pdf-tools
+    :config
+    (add-hook 'pdf-view-mode-hook 'pdf-view-restore-mode))
+#+end_src
+
+* Org-Mode
+** =org-mode=
+
+Install org-mode from the org package repository.
+
+[[https://orgmode.org/][More Information]]
+
+#+begin_src emacs-lisp :noweb tangle
+  (use-package org
+    :straight org-contrib
+    :hook
+    (after-save . my/tangle-emacs-config)
+    (org-mode . (lambda ()
+                  ;; (visual-line-mode) ;; visual line
+                  (flyspell-mode) ;; turn on flyspell
+                  (turn-on-org-cdlatex) ;; turn on cdlatex
+                  (display-fill-column-indicator-mode)
+                  (auto-fill-mode)
+                  (diminish 'org-cdlatex-mode) ;; remove from modeline
+                  ;; (variable-pitch-mode -1)
+                  (bind-key "<s-return>" 'org-table-insert-row orgtbl-mode-map)
+                  ))
+    :config
+    ;; Org settings
+    (setq org-directory "~/Documents/Org") ;; Set default org directory
+    (setq org-default-notes-file (concat org-directory "/tasks.org")) ;; Set default org capture file
+    ;; Org agenda
+    (setq org-todo-keywords
+          '((sequence "TODO"  "|" "DONE" "CANCELED")))
+    (setq org-agenda-files '("~/Documents/Org/"))
+    (setq org-agenda-window-setup 'current-window)
+    ;; org capture
+    (setq org-capture-templates
+          '(("a" "Assignment" entry
+             (file+headline "~/Documents/Org/Academic.org" "Assignments")
+             "* TODO %?\n")
+            ("E" "Exam" entry
+             (file+headline "~/Documents/Org/Academic.org" "Exams")
+             "* TODO %?\n")
+            ("P" "Project" entry
+             (file+headline "~/Documents/Org/Academic.org" "Projects")
+             "* TODO %?\n")))
+    ;; Tangle on saving this file
+    (defun my/tangle-emacs-config ()
+      "If the current file is this file, the code blocks are tangled"
+      (when (equal (buffer-file-name) (expand-file-name "~/.emacs.d/my-literate-emacs-configuration.org"))
+        (org-babel-tangle nil "~/.emacs.d/init.el")))
+    ;; Do not confirm when evaluating code blocks
+    (setq org-confirm-babel-evaluate nil)
+    ;; Run/highlight code using babel in org-mode
+    (org-babel-do-load-languages
+     'org-babel-load-languages
+     '((python . t)
+       (latex . t)
+       (jupyter . t)
+       (js . t)
+       (sql . t)
+       (shell . t)
+       (emacs-lisp . t)))
+    ;; https://sqrtminusone.xyz/posts/2021-05-01-org-python/
+    ;; Overwrite python as jupyter-python block
+    (org-babel-jupyter-override-src-block "python")
+    (setq ob-async-no-async-languages-alist '("python" "jupyter-python"))
+    (add-hook 'org-babel-after-execute-hook 'org-redisplay-inline-images)
+    ;; https://sqrtminusone.xyz/posts/2021-05-01-org-python/
+    ;; Set org emphasis alist - remove strikethroug
+    (setq org-emphasis-alist '(("*" bold)
+                               ("/" italic)
+                               ("_" underline)
+                               ("=" org-verbatim verbatim)
+                               ("~" org-code verbatim)
+                               ("+" (:strike-through nil))))
+
+    (setq org-src-fontify-natively t) ;; Syntax highlight in #+BEGIN_SRC blocks
+    (setq org-special-ctrl-a/e t) ;; cycle C-e and C-a
+    ;; plain, current-window, split-window-below, other-window, other-frame
+    (setq org-src-window-setup 'plain)
+    (setq org-adapt-indentation nil) ;; do not indent after sections
+    ;; ;; edit block inserts
+    (setq org-structure-template-alist
+          '(("a" . "export ascii\n")
+            ("c" . "center\n")
+            ("C" . "comment\n")
+            ("e" . "src emacs-lisp\n")
+            ("E" . "export")
+            ("h" . "export html\n")
+            ("l" . "src latex\n")
+            ("q" . "quote\n")
+            ("p" . "src python\n")
+            ("s" . "src sql")
+            ("v" . "verse\n")))
+    ;; Configure latex exports
+    (setq org-latex-logfiles-extensions (quote ("lof" "lot" "xdv" "synctex.gz" "tex" "aux" "idx" "log" "out" "toc" "nav" "snm" "vrb" "dvi" "fdb_latexmk" "blg" "brf" "fls" "entoc" "ps" "spl" "bbl" "pygtex" "pygstyle" "ilg" "nlo" "nls")))
+    (setq org-latex-remove-logfiles t)
+    ;; https://so.nwalsh.com/2020/01/05-latex
+    (setq org-latex-compiler "xelatex")
+    (setq org-latex-pdf-process
+          (list (concat "latexmk -shell-escape -"
+                        org-latex-compiler
+                        " -recorder -synctex=1 -bibtex-cond %b")))
+    (setq org-export-in-background t) ;; export async
+    ;; Configure Org to use lstlisting for source environments.
+    (setq org-latex-listings t)
+    ;; Captions below
+    (setq org-latex-caption-above nil)
+    ;; org ref labels
+    (setq org-latex-prefer-user-labels t)
+    ;; Use predefine latex template for orgmode export to latex
+    ;; https://so.nwalsh.com/2020/01/05-latex
+    <<LatexTemplates>>
+    <<BeautifyingOrgMode>>
+    )
+#+end_src
+
+** LatexTemplates
+
+#+begin_src emacs-lisp :tangle no :noweb-ref LatexTemplates
+  (setq org-latex-default-packages-alist
+        '(
+          ;; packages from template creator
+          ("" "longtable" nil)
+          ("normalem" "ulem" t)
+          ("" "textcomp" t)
+          ("" "capt-of" nil)
+          ("" "hyperref" nil)
+          ;; images/figures
+          ("" "graphicx" t)
+          ("" "grffile" t)
+          ("" "wrapfig" t)
+          ("" "float" t)
+          ("" "rotating" nil)
+          ;; tables
+          ("" "array" t)
+          ("" "tabu" t)
+          ("" "multirow" t)
+          ("" "tabularx" t)
+          ;; math
+          ("" "amsmath" t)
+          ("" "amssymb" t)
+          ("" "amsfonts" t)
+          ("" "amsthm" t)
+          ("" "relsize" t)
+          ("" "mathtools" t)
+          ;; formatting
+          ("" "verbatim" t)
+          ))
+  (setq org-latex-classes
+        '(("article"
+           " \\RequirePackage{fix-cm}
+  \\PassOptionsToPackage{svgnames}{xcolor}
+  \\documentclass[8pt]{article}
+  \\usepackage{fontspec}
+  \\usepackage{booktabs}
+  \\usepackage{ragged2e}
+  \\usepackage[skip=2pt, justification=centering]{caption}
+  \\usepackage{enumitem}
+  \\usepackage[nottoc]{tocbibind}
+  \\setlist{nosep,after=\\vspace{4pt}}
+  \\usepackage{listings}
+  \\lstset{frame=single,aboveskip=1em,
+          framesep=.5em,backgroundcolor=\\color{AliceBlue},
+          rulecolor=\\color{LightSteelBlue},framerule=1pt}
+  \\usepackage{xcolor}
+  \\newcommand\\basicdefault[1]{\\scriptsize\\color{Black}\\ttfamily#1}
+  \\lstset{basicstyle=\\basicdefault{\\spaceskip1em}}
+  \\lstset{literate=
+              {§}{{\\S}}1
+              {©}{{\\raisebox{.125ex}{\\copyright}\\enspace}}1
+              {«}{{\\guillemotleft}}1
+              {»}{{\\guillemotright}}1
+              {Á}{{\\'A}}1
+              {Ä}{{\\\"A}}1
+              {É}{{\\'E}}1
+              {Í}{{\\'I}}1
+              {Ó}{{\\'O}}1
+              {Ö}{{\\\"O}}1
+              {Ú}{{\\'U}}1
+              {Ü}{{\\\"U}}1
+              {ß}{{\\ss}}2
+              {à}{{\\`a}}1
+              {á}{{\\'a}}1
+              {ä}{{\\\"a}}1
+              {é}{{\\'e}}1
+              {í}{{\\'i}}1
+              {ó}{{\\'o}}1
+              {ö}{{\\\"o}}1
+              {ú}{{\\'u}}1
+              {ü}{{\\\"u}}1
+              {¹}{{\\textsuperscript1}}1
+              {²}{{\\textsuperscript2}}1
+              {³}{{\\textsuperscript3}}1
+              {ı}{{\\i}}1
+              {—}{{---}}1
+              {’}{{'}}1
+              {…}{{\\dots}}1
+              {⮠}{{$\\hookleftarrow$}}1
+              {␣}{{\\textvisiblespace}}1,
+              keywordstyle=\\color{DarkGreen}\\bfseries,
+              identifierstyle=\\color{DarkRed},
+              commentstyle=\\color{Gray}\\upshape,
+              stringstyle=\\color{DarkBlue}\\upshape,
+              emphstyle=\\color{Chocolate}\\upshape,
+              showstringspaces=false,
+              columns=fullflexible,
+              keepspaces=true}
+  \\usepackage[a4paper,top=1.9cm, bottom=1.9cm, left=1.32cm, right=1.32cm]{geometry}
+  %\\usepackage[none]{hyphenat}
+  \\usepackage{sectsty} % use to set section color
+  \\usepackage{parskip}
+  \\setlength\\parindent{0pt}
+  \\setlength\\parskip{1em}
+  \\makeatletter
+  \\renewcommand{\\maketitle}{%
+  \\begingroup\\parindent0pt
+  \\Large{\\bfseries\\@title}\\newline
+  \\normalsize{\\bfseries\\@author}\\newline
+  \\normalsize{\\@date}\\vspace{-0.2cm}\\newline
+  \\noindent\\makebox[\\textwidth]{\\rule{\\textwidth}{0.4pt}}
+  \\endgroup\\@afterindentfalse\\@afterheading}
+  \\makeatother
+  [DEFAULT-PACKAGES]
+  \\let\\oldtextbf\\textbf
+  \\renewcommand{\\textbf}[1]{\\textcolor{black}{\\oldtextbf{#1}}}
+  \\renewcommand{\\baselinestretch}{1.0}
+  \\renewcommand{\\labelenumii}{\\theenumii}
+  \\renewcommand{\\theenumii}{\\theenumi.\\arabic{enumii}.}
+  \\hypersetup{linkcolor=Blue,urlcolor=DarkBlue,
+    citecolor=DarkRed,colorlinks=true}
+  [PACKAGES]
+  [EXTRA]"
+           ("\\section{%s}" . "\\section*{%s}")
+           ("\\subsection{%s}" . "\\subsection*{%s}")
+           ("\\subsubsection{%s}" . "\\subsubsection*{%s}")
+           ("\\paragraph{%s}" . "\\paragraph*{%s}")
+           ("\\subparagraph{%s}" . "\\subparagraph*{%s}"))
+
+          ("report" "\\documentclass[11pt]{report}"
+           ("\\part{%s}" . "\\part*{%s}")
+           ("\\chapter{%s}" . "\\chapter*{%s}")
+           ("\\section{%s}" . "\\section*{%s}")
+           ("\\subsection{%s}" . "\\subsection*{%s}")
+           ("\\subsubsection{%s}" . "\\subsubsection*{%s}"))
+
+          ("book" "\\documentclass[11pt]{book}"
+           ("\\part{%s}" . "\\part*{%s}")
+           ("\\chapter{%s}" . "\\chapter*{%s}")
+           ("\\section{%s}" . "\\section*{%s}")
+           ("\\subsection{%s}" . "\\subsection*{%s}")
+           ("\\subsubsection{%s}" . "\\subsubsection*{%s}"))))
+#+end_src
+
+** BeautifyingOrgMode
+
+[[https://zzamboni.org/post/beautifying-org-mode-in-emacs/][More Information]]
+
+#+begin_src emacs-lisp :tangle no :noweb-ref BeautifyingOrgMode
+  (setq org-ellipsis " ▾")
+  (setq org-hide-emphasis-markers t) ;; hide emphasis markers *...*, /.../, etc
+  ;; proportional fonts, in different sizes, for the headlines.
+  ;; https://edwardtufte.github.io/et-book/
+  (let* ((variable-tuple
+          (cond ((x-list-fonts "ETBembo")         '(:font "ETBembo"))
+                ((x-list-fonts "Source Sans Pro") '(:font "Source Sans Pro"))
+                ((x-list-fonts "Lucida Grande")   '(:font "Lucida Grande"))
+                ((x-list-fonts "Verdana")         '(:font "Verdana"))
+                ((x-family-fonts "Sans Serif")    '(:family "Sans Serif"))
+                (nil (warn "Cannot find a Sans Serif Font.  Install Source Sans Pro."))))
+         (base-font-color     (face-foreground 'default nil 'default))
+         (headline           `(:inherit default :weight bold :foreground ,base-font-color)))
+
+    (custom-theme-set-faces
+     'user
+     `(org-level-8 ((t (,@headline ,@variable-tuple))))
+     `(org-level-7 ((t (,@headline ,@variable-tuple))))
+     `(org-level-6 ((t (,@headline ,@variable-tuple))))
+     `(org-level-5 ((t (,@headline ,@variable-tuple))))
+     `(org-level-4 ((t (,@headline ,@variable-tuple :forground "RoyalBlue1"   :height 1.1))))
+     `(org-level-3 ((t (,@headline ,@variable-tuple :foreground "firebrick3" :height 1.25))))
+     `(org-level-2 ((t (,@headline ,@variable-tuple :foreground "green3" :height 1.5))))
+     `(org-level-1 ((t (,@headline ,@variable-tuple :foreground "DarkOrange2" :height 1.75))))
+     `(org-document-title ((t (,@headline ,@variable-tuple :height 2.0 :underline nil))))))
+
+  ;; (custom-theme-set-faces
+  ;;  'user
+  ;;  '(variable-pitch ((t (:family "ETBembo" :height 180))))
+  ;;  '(fixed-pitch ((t ( :family "Fira Code Retina" :height 160)))))
+
+  ;; (custom-theme-set-faces
+  ;;  'user
+  ;;  '(org-block ((t (:inherit fixed-pitch))))
+  ;;  '(org-code ((t (:inherit (shadow fixed-pitch)))))
+  ;;  '(org-document-info ((t (:foreground "dark orange"))))
+  ;;  '(org-document-info-keyword ((t (:inherit (shadow fixed-pitch)))))
+  ;;  '(org-indent ((t (:inherit (org-hide fixed-pitch)))))
+  ;;  '(org-link ((t (:foreground "royal blue" :underline t))))
+  ;;  '(org-meta-line ((t (:inherit (font-lock-comment-face fixed-pitch)))))
+  ;;  '(org-property-value ((t (:inherit fixed-pitch))) t)
+  ;;  '(org-special-keyword ((t (:inherit (font-lock-comment-face fixed-pitch)))))
+  ;;  '(org-table ((t (:inherit fixed-pitch :foreground "#83a598"))))
+  ;;  '(org-tag ((t (:inherit (shadow fixed-pitch) :weight bold :height 0.8))))
+  ;;  '(org-verbatim ((t (:inherit (shadow fixed-pitch))))))
+#+end_src
+
+** =org-download=
+
+=org-download= is an extension that facilitates moving images to org files.
+[[https://github.com/abo-abo/org-download][More Information]]
+
+#+begin_src emacs-lisp
+  (use-package org-download
+    :config
+    (setq org-download-display-inline-images nil))
+#+end_src
+
+** =toc-org=
+
+Install the =toc-org= package to automatically generate an updated table of contents.
+
+[[https://github.com/snosov1/toc-org][More Information]]
+
+#+begin_src emacs-lisp
+  (use-package toc-org
+    :after org
+    :hook
+    (org-mode . toc-org-enable))
+#+end_src
+
+** =org-bullets=
+
+[[https://github.com/sabof/org-bullets][More Information]]
+
+#+begin_src emacs-lisp
+  (use-package org-bullets
+    :after org
+    :hook
+    (org-mode . org-bullets-mode))
+ #+end_src
+
+** =visual-fill-column=
+=visual-fill-column-mode= is a small Emacs minor mode that mimics the effect of =fill-column= in =visual-line-mode=.
+[[https://github.com/joostkremers/visual-fill-column][More Information]]
+
+#+begin_src emacs-lisp :tangle no
+  (defun my/org-mode-visual-fill ()
+    (setq visual-fill-column-width 100
+          visual-fill-column-center-text t)
+    (visual-fill-column-mode 1))
+
+  (use-package visual-fill-column
+    :disabled
+    :hook (org-mode . my/org-mode-visual-fill))
+#+end_src
+
+** =ox-twbs=
+Export org-mode docs as HTML compatible with Twitter Bootstrap.
+[[https://github.com/marsmining/ox-twbs][More Information]]
+
+#+begin_src emacs-lisp
+  (use-package ox-twbs)
+#+end_src
+** =reveal
+.js=
+
+Install reveal.js from [[https://github.com/hakimel/reveal.js/][here]]. Then, install [[https://github.com/hexmode/ox-reveal][=ox-reveal=]] and [[https://github.com/hniksic/emacs-htmlize][=htmlize=]].
+
+[[https://github.com/hexmode/ox-reveal][More Information]]
+
+#+begin_src emacs-lisp :tangle no
+  (use-package ox-reveal
+    :ensure ox-reveal
+    :config
+    (setq org-reveal-root "/Users/simenojensen/.emacs.d/site-elisp/reveal.js/")
+    (setq org-reveal-mathjax t))
+#+end_src
+
+** =htmlize=
+
+[[https://github.com/hniksic/emacs-htmlize][More Information]]
+
+#+begin_src emacs-lisp
+  (use-package htmlize)
+#+end_src
+
+** Publishing
+*** =simple-httpd=
+[[https://github.com/briandowns/simple-httpd][More Information]]
+#+begin_src emacs-lisp
+  (use-package simple-httpd)
+#+end_src
+
+* Bibliography
+** =reftex=
+
+=RefTEX= is a specialized package for support of labels, references, citations, and the indices in $\latex$.
+[[https://www.gnu.org/software/auctex/reftex.html][More Information]]
+
+#+begin_src emacs-lisp
+  (use-package reftex
+    :diminish
+    :commands turn-on-reftex
+    :config
+    (setq reftex-cite-prompt-optional-args t) ;; Prompt for empty optional arguments in cite
+    (setq reftex-default-bibliography '("/Users/simenojensen/Documents/Org/Bibliography/library.bib"))
+    (setq reftex-plug-into-AUCTeX t))
+#+end_src
+** =ivy-bibtex=
+
+=ivy-bibtex= allow you to search and manage your BibTeX bibliography.
+[[https://github.com/tmalsburg/helm-bibtex][More Information]]
+
+#+begin_src emacs-lisp
+  (use-package ivy-bibtex
+    :config
+    (setq bibtex-completion-bibliography "/Users/simenojensen/Documents/Org/Bibliography/library.bib") ;; location of bibtex file
+    (setq bibtex-completion-library-path "/Users/simenojensen/Documents/Org/Bibliography") ;; directory of bibtex pdf files
+    (setq bibtex-completion-notes-path "/Users/simenojensen/Documents/Org/Bibliography/notes.org") ;; location of bibliography notes file
+    (setq bibtex-completion-pdf-field "File") ;; using bibtex path reference to pdf file
+    ;; open pdf with system pdf viewer (works on mac)
+    (setq bibtex-completion-pdf-open-function (lambda (fpath)
+                                                (start-process "open" "*open" "open" fpath)))
+    (setq ivy-bibtex-default-action 'bibtex-completion-insert-citation))
+#+end_src
+** =org-ref=
+
+=org-ref= - citations, cross-references, indexes, glossaries and bibtex utilities for org-mode
+[[https://github.com/jkitchin/org-ref][More Information]]
+
+[[https://nickgeorge.net/science/org_ref_setup/][Guide for setup]]
+
+#+begin_src emacs-lisp
+  (use-package org-ref
+    :after org)
+#+end_src
+
+* Writing
+** =flyspell=
+#+begin_src emacs-lisp
+  (use-package flyspell
+    :config
+    (setenv
+     "DICPATH"
+     (concat (getenv "HOME") "/Library/Spelling"))
+    (setenv "DICTIONARY" "en_US")
+    ;; Tell ispell-mode to use hunspell.
+    (setq ispell-program-name "hunspell")
+    (setq-default ispell-hunspell-dict-paths-alist
+                  '(("en_US" "~/Library/Spelling/en_US.aff"))))
+
+  (defun my/save-word-to-personal-dictionary ()
+    "Save word to personal dictionary"
+    (interactive)
+    (let ((current-location (point))
+          (word (flyspell-get-word)))
+      (when (consp word)
+        (flyspell-do-correct 'save nil (car word) current-location (cadr word) (caddr word) current-location))))
+
+  ;; Remap
+  (unbind-key "C-c $" flyspell-mode-map)
+  (bind-key "C-c $" 'my/save-word-to-personal-dictionary flyspell-mode-map)
+
+  ;; Norsk tastatur
+  (bind-key "C-ø" 'flyspell-auto-correct-previous-word flyspell-mode-map)
+#+end_src
+** =synosaurus=
+
+Synosaurus is a thesaurus fontend for Emacs with pluggable backends.
+[[https://github.com/hpdeifel/synosaurus][More Information]]
+
+#+begin_src emacs-lisp
+  (use-package synosaurus
+    :init
+    (synosaurus-mode)
+    :hook
+    (text-mode . synosaurus-mode)
+    :config
+    (setq synosaurus-choose-method 'ido))
+#+end_src
+
+** =guess-language=
+=guess-language= is an Emacs minor mode that detects the language of what you're
+typing. Automatically switches the spell checker and typo-mode if present.
+[[https://github.com/tmalsburg/guess-language.el][More Information]]
+
+#+begin_src emacs-lisp :tangle no
+  (use-package guess-language
+    :disabled
+    :hook
+    (text-mode . guess-language-mode)
+    :config
+    (setq guess-language-langcodes '((en . ("en_US" "English"))
+                                     (no . ("nb_NO" "Norwegian"))))
+    (setq guess-language-languages '(en no))
+    (setq guess-language-min-paragraph-length 45))
+#+end_src
+
+* Elisp Functions
+** Read content of file
+
+#+begin_src emacs-lisp
+  (defun my/get-file-content-as-string (filePath)
+    "Return filePath's content as string."
+    (with-temp-buffer
+      (insert-file-contents filePath)
+      (buffer-string)))
+#+end_src
+
+** Edit Configuration File
+
+#+begin_src emacs-lisp
+  (defun my/edit-config ()
+    "Opens the my-literate-emacs-configuration.org file."
+    (interactive)
+    (find-file "~/.emacs.d/my-literate-emacs-configuration.org"))
+#+end_src
+
+** Switching jupyter kernel in conda environment
+
+[[https://sqrtminusone.xyz/posts/2021-05-01-org-python/][More Information]]
+
+#+begin_src emacs-lisp
+  (defun my/jupyter-refresh-kernelspecs ()
+    "Refresh Jupyter kernelspecs"
+    (interactive)
+    (jupyter-available-kernelspecs t))
+#+end_src
+
+** Insert Org Startup Template
+
+#+begin_src emacs-lisp
+  (defun my/org-startup ()
+    (interactive)
+    (insert "#+TITLE: \n#+AUTHOR: Simen Omholt-Jensen\n#+OPTIONS: toc:nil\n"))
+#+end_src
+
+#+begin_src emacs-lisp
+  (defun my/org-notebook-startup ()
+    (interactive)
+    (insert "#+TITLE: \n#+AUTHOR: Simen Omholt-Jensen\n#+OPTIONS: toc:nil\n#+STARTUP: overview\n")
+    (insert "#+PROPERTY: header-args:python :session notebook :kernel notebook :async yes :results output :exports both :eval never-export\n\n")
+    (insert "** Imports\n #+begin_src python\n")
+    (insert "  import numpy as np\n  import pandas as pd\n  import matplotlib.pyplot as plt\n")
+    (insert "  import matplotlib as mpl\n  mpl.rcParams['figure.facecolor']='w'\n")
+    (insert "  #+end_src\n\n"))
+#+end_src
+
+** Open HTML buffer in Chrome
+#+begin_src emacs-lisp
+  (defun my/browse-url-of-buffer-with-chrome ()
+    "Same as `browse-url-of-buffer` but using chrome"
+    (interactive)
+    ;; (shell-command (concat "open -a 'Google Chrome.app' file://" buffer-file-name)))
+   (shell-command (concat "open -a 'Google Chrome.app' " buffer-file-name)))
+#+end_src
+
+** transpose windows
+[[https://emacs.stackexchange.com/questions/5371/how-to-change-emacs-windows-from-vertical-split-to-horizontal-split][More Information]]
+#+begin_src emacs-lisp
+  (defun window-split-toggle ()
+    "Toggle between horizontal and vertical split with two windows."
+    (interactive)
+    (if (> (length (window-list)) 2)
+        (error "Can't toggle with more than 2 windows!")
+      (let ((func (if (window-full-height-p)
+                      #'split-window-vertically
+                    #'split-window-horizontally)))
+        (delete-other-windows)
+        (funcall func)
+        (save-selected-window
+          (other-window 1)
+          (switch-to-buffer (other-buffer))))))
+
+  (bind-key "C-x C-t" 'window-split-toggle)
+#+end_src
+
+* Tools
+** Wireshark
+*** =pcap-mode=
+[[https://github.com/orgcandman/pcap-mode][More Information]]
+
+#+begin_src emacs-lisp :tangle no
+  (use-package pcap-mode
+    :mode
+    ("\\.pcapng\\'" . pcap-mode)
+    :load-path (lambda () (expand-file-name "site-elisp/pcap-mode" user-emacs-directory)))
+#+end_src
+
+** Internet
+*** =google-this=
+
+[[http://pragmaticemacs.com/emacs/google-search-from-inside-emacs/][More Information]]
+
+#+begin_src emacs-lisp
+  (use-package google-this
+    :diminish
+    :config
+    (google-this-mode t))
+#+end_src
+
+*** =engine-mode=
+
+#+begin_src emacs-lisp
+  (use-package engine-mode
+    :config
+    (engine-mode t)
+    (defengine google
+      "http://www.google.com/search?ie=utf-8&oe=utf-8&q=%s"
+      :keybinding "g")
+    (defengine github
+      "https://github.com/search?ref=simplesearch&q=%s")
+    (defengine google-maps
+      "http://maps.google.com/maps?q=%s"
+      :docstring "Mappin' it up.")
+    (defengine youtube
+      "http://www.youtube.com/results?aq=f&oq=&search_query=%s"
+      :keybinding "y"))
+#+end_src
+
+* Experimental
+#+begin_src emacs-lisp
+
+#+end_src
+
+*** =forge=
+[[https://emacsair.me/2018/12/19/forge-0.1/][forge]]
+
+** Writing tools to look into
+-[[https://people.umass.edu/weikaichen/post/emacs-academic-tools/][emacs-academic-tools]]
+- [[https://github.com/nashamri/academic-phrases][academic-phrases]]
+- [[https://github.com/gromnitsky/wordnut][wordnut]]
+- [[https://github.com/hpdeifel/synosaurus][synosaurus]]
+- [[https://github.com/org-roam/org-roam][org-roam]]
+  - [[https://rgoswami.me/posts/org-note-workflow/][org-mode notes workflow]]
+
+- =org2blog= to wordspress
+- =org-publish=
